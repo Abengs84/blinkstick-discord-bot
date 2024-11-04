@@ -6,7 +6,7 @@ A Python-based Discord bot that controls LED indicators (via BlinkStick) based o
 
 - **Real-time Voice Activity Monitoring**: Detects when specific users are speaking in Discord voice channels
 - **LED Integration**: Controls BlinkStick LED devices to provide visual feedback
-  - Red LED indicates when the primary user (***REMOVED***) is speaking
+  - Red LED indicates when the primary user is speaking
   - Blue LED indicates when other users are speaking
   - Custom LED patterns for various events (startup, notifications, etc.)
 - **System Tray Integration**: 
