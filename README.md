@@ -44,12 +44,22 @@ A Python-based Discord bot that controls LED indicators (via BlinkStick) based o
 pip install -r requirements.txt
 ```
 
-2. Create a `config.json` file with your Discord bot token:
+2. Create a `config.json` file with your configuration:
 ```json
 {
-"token": "YOUR_DISCORD_BOT_TOKEN"
+    "token": "YOUR_DISCORD_BOT_TOKEN",
+    "target_user": "username",
+    "debug_mode": true,
+    "led_enabled": false
 }
 ```
+
+Configuration options:
+- `token`: Your Discord bot token
+- `target_user`: The Discord username to track for voice activity
+- `debug_mode`: Enable/disable debug messages
+- `led_enabled`: Initial LED state
+
 3. Connect your BlinkStick device
    
 4. Run the application:

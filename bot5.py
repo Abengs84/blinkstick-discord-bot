@@ -52,17 +52,21 @@ if not discord.opus.is_loaded():
     except Exception as e:
         print(f"Failed to load Opus: {e}")
 
+config = load_config()
+if config:
+    DEBUG_MODE = config.get('debug_mode', True)
+    TARGET_USER = config.get('target_user', '***REMOVED***')
+    led_on = config.get('led_enabled', False)
+else:
+    # Fallback defaults if config fails to load
+    DEBUG_MODE = True
+    TARGET_USER = "***REMOVED***"
+    led_on = False
 
-# Global variable to control debug output
-DEBUG_MODE = True
-
-# Function to print debug messages
 def debug_print(message):
+    """Print debug messages if DEBUG_MODE is enabled"""
     if DEBUG_MODE:
-        print(message)
-
-# Variable to track LED state
-led_on = False
+        print(f"[DEBUG] {message}")
 
 # Initialize the BlinkStick
 bs = blinkstick.find_first()
@@ -112,7 +116,7 @@ class MySink(voice_recv.AudioSink):
     def on_voice_member_speaking_start(self, member: discord.Member):
         print(f"Voice start detected for {member.name}")  # Debug print
         self.speaking_states[member.name] = True
-        if member.name.strip().lower() == "***REMOVED***":
+        if member.name.strip().lower() == TARGET_USER.lower():
             print("Attempting to set red LED")  # Debug print
             set_led_color(channel=0, index=0, red=255, green=0, blue=0)
         else:
@@ -123,7 +127,7 @@ class MySink(voice_recv.AudioSink):
     def on_voice_member_speaking_stop(self, member: discord.Member):
         print(f"Voice stop detected for {member.name}")  # Debug print
         self.speaking_states[member.name] = False
-        if member.name.strip().lower() == "***REMOVED***":
+        if member.name.strip().lower() == TARGET_USER.lower():
             print("Attempting to turn off red LED")  # Debug print
             set_led_color(channel=0, index=0, red=0, green=0, blue=0)
         else:
@@ -150,18 +154,18 @@ class MyBot(commands.Bot):
             debug_print(f"Checking guild: {guild.name}")  # Debugging output
             for member in guild.members:
                 debug_print(f"Checking member: {member.name}, Voice: {member.voice}")  # Debugging output
-                if member.name.strip().lower() == "***REMOVED***":  # Case insensitive check
+                if member.name.strip().lower() == TARGET_USER.lower():
                     if member.voice:  # Check if the user is in a voice channel
                         channel = member.voice.channel
-                        debug_print(f"***REMOVED*** is in channel: {channel.name}")  # Debugging output
+                        debug_print(f"{TARGET_USER} is in channel: {channel.name}")
                         vc = await channel.connect(cls=voice_recv.VoiceRecvClient)
                         sink = MySink()  # Create an instance of MySink
                         vc.listen(sink)  # Register the sink to listen for audio data
-                        debug_print(f"Bot has joined {channel.name} because ***REMOVED*** is in it.")
+                        debug_print(f"Bot has joined {channel.name} because {TARGET_USER} is in it.")
                         return  # Exit after joining the channel
                     else:
-                        debug_print("***REMOVED*** is not in any voice channel.")  # Debugging output
-        debug_print("***REMOVED*** is not in any voice channel.")  # Debugging output
+                        debug_print(f"{TARGET_USER} is not in any voice channel.")
+        debug_print(f"{TARGET_USER} is not in any voice channel.")
 
 # Initialize the bot
 intents = discord.Intents.default()
@@ -212,7 +216,7 @@ async def callback(voice_client, user, data: voice_recv.VoiceData):
     user_name = user.name
     debug_print(f"Got packet from {user_name}")  # Debugging output
 
-    if user_name.strip() == "***REMOVED***":
+    if user_name.strip() == TARGET_USER:
         speaking = is_listening(voice_client, user)  # Check if the user is speaking
 
 # Set up a listener for the key combination
@@ -250,7 +254,7 @@ async def on_message(message):
 # New event listener for when ***REMOVED*** stops speaking
 @bot.event
 async def on_voice_member_speaking_stop(member: discord.Member):
-    if member.name.strip().lower() == "***REMOVED***":
+    if member.name.strip().lower() == TARGET_USER.lower():
         debug_print(f"{member.name} has stopped speaking.")
         # Add your LED off logic here
 
@@ -266,9 +270,9 @@ async def on_ready():
 
 @bot.event
 async def on_voice_state_update(member, before, after):
-    if member.name.strip().lower() == "***REMOVED***":
+    if member.name.strip().lower() == TARGET_USER.lower():
         if after.channel:  # When joining a channel
-            debug_print(f"{member.name} has joined {after.channel.name}.")
+            debug_print(f"{TARGET_USER} has joined {after.channel.name}.")
             try:
                 # Reinitialize BlinkStick
                 initialize_blinkstick()
@@ -323,15 +327,15 @@ listener_thread.daemon = True  # Make the thread a daemon
 listener_thread.start()
 
 def cleanup():
-    debug_print("Cleaning up before exit...")
-    channel = 0  # Specify the channel you want to turn off
-    num_indexes = 8  # Replace with the actual number of indexes for your LED strip
-
-    # Turn off all indexes on the specified channel
-    for index in range(num_indexes):
-        set_led_color(channel=channel, index=index, red=0, green=0, blue=0)  # Turn off the LED at each index
-
-    sys.exit(0)
+    if DEBUG_MODE:
+        debug_print("Cleaning up...")
+    
+    # Silently turn off all LEDs
+    for index in range(8):
+        try:
+            bs.set_color(channel=0, index=index, red=0, green=0, blue=0)
+        except:
+            pass
 
 # Register the cleanup function to be called on exit
 signal.signal(signal.SIGINT, lambda s, f: cleanup())
@@ -403,27 +407,33 @@ def create_tray_icon():
         icon_image = Image.open(icon_path)
     except Exception as e:
         print(f"Failed to load icon: {e}")
-        # Fallback to generated icon
         icon_image = Image.new('RGB', (64, 64), color = 'red')
     
     def exit_action(icon):
-        icon.stop()
-        cleanup()
-        os._exit(0)
+        try:
+            # Stop keyboard listener
+            keyboard.unhook_all()
+            
+            # Cleanup resources silently
+            cleanup()
+            
+            # Stop the icon
+            icon.stop()
+            
+            # Exit without using sys.exit
+            os._exit(0)
+        except:
+            os._exit(0)
 
     def show_status(icon):
-        # Show status window instead of notification
         status_window.show()
 
-    # Create the menu
     menu = (
         item('Status', show_status),
         item('Exit', exit_action)
     )
 
-    # Create the icon
-    icon = pystray.Icon("DiscordBot", icon_image, "Discord Bot", menu)
-    return icon
+    return pystray.Icon("DiscordBot", icon_image, "Discord Bot", menu)
 
 # Modify your main code to run in a separate thread
 def run_bot():
