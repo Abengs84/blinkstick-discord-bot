@@ -1,0 +1,20 @@
+# Project-specific files
+config.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+build/
+dist/
+
+# IDE
+.vscode/
+.idea/
+
+# Virtual Environment
+venv/
+env/
+
+# Other
+.DS_Store
