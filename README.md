@@ -83,4 +83,4 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 - Discord.py developers
 - BlinkStick team
-- [Any other acknowledgments]
+- [icon-icons.com](https://icon-icons.com/) for the LED icon
