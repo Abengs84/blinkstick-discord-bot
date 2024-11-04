@@ -57,11 +57,13 @@ if config:
     DEBUG_MODE = config.get('debug_mode', True)
     TARGET_USER = config.get('target_user', '***REMOVED***')
     led_on = config.get('led_enabled', False)
+    HOTKEY = config.get('hotkey', 'ctrl+shift+alt+ö')
 else:
     # Fallback defaults if config fails to load
     DEBUG_MODE = True
     TARGET_USER = "***REMOVED***"
     led_on = False
+    HOTKEY = 'ctrl+shift+alt+ö'
 
 def debug_print(message):
     """Print debug messages if DEBUG_MODE is enabled"""
@@ -221,6 +223,7 @@ async def callback(voice_client, user, data: voice_recv.VoiceData):
 
 # Set up a listener for the key combination
 def start_key_listener():
+    keyboard.add_hotkey(HOTKEY, change_led_color)
     keyboard.wait()  # This will block until the program is terminated
 
 @bot.event
@@ -318,7 +321,7 @@ async def say(ctx, *, text: str):
         await ctx.send("You need to be in a voice channel to use this command.")
 
 def start_key_listener():
-    keyboard.add_hotkey('ctrl+shift+alt+ö', change_led_color)
+    keyboard.add_hotkey(HOTKEY, change_led_color)
     keyboard.wait()  # This will block until the program is terminated
 
 # Start the key listener in a separate thread

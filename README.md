@@ -50,7 +50,8 @@ pip install -r requirements.txt
     "token": "YOUR_DISCORD_BOT_TOKEN",
     "target_user": "username",
     "debug_mode": true,
-    "led_enabled": false
+    "led_enabled": false,
+    "hotkey": "ctrl+shift+alt+ö"
 }
 ```
 
@@ -59,6 +60,7 @@ Configuration options:
 - `target_user`: The Discord username to track for voice activity
 - `debug_mode`: Enable/disable debug messages
 - `led_enabled`: Initial LED state
+- `hotkey`: Global hotkey combination for PTT toggle (default: "ctrl+shift+alt+ö")
 
 3. Connect your BlinkStick device
    
