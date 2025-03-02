@@ -21,3 +21,7 @@ env/
 audio/
 sounds/
 *.wav
+sensitive.txt
+bfg-1.15.0.jar
+.git/
+..bfg-report
