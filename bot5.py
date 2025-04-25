@@ -26,6 +26,7 @@ import numpy as np
 import wave
 import random
 import edge_tts
+import openai  # Add OpenAI import
 
 print(f"Python {platform.architecture()}")
 
@@ -52,6 +53,16 @@ def load_config():
         print(f"Error loading config: {e}")
         return None
 
+# Default LED colors if not found in config
+DEFAULT_LED_COLORS = {
+    "target_voice": {"red": 255, "green": 0, "blue": 0},
+    "other_voice": {"red": 0, "green": 0, "blue": 255},
+    "hotkey": {"red": 60, "green": 0, "blue": 0},
+    "notification": {"red": 255, "green": 204, "blue": 0},
+    "gpt_activity": {"red": 128, "green": 0, "blue": 128},
+    "power_on": {"red": 0, "green": 100, "blue": 0}
+}
+
 # Load config before using debug_print
 config = load_config()
 if config:
@@ -59,40 +70,37 @@ if config:
     TARGET_USER = config.get('target_user', 'USER')
     led_on = config.get('led_enabled', False)
     HOTKEY = config.get('hotkey', 'ctrl+shift+alt+o')
+    OPENAI_API_KEY = config.get('openai_api_key', '')
+    GPT_MODEL = config.get('gpt_model', 'gpt-3.5-turbo')
+    LED_COLORS = config.get('led_colors', DEFAULT_LED_COLORS)  # Use default colors if not in config
+    
+    # Initialize OpenAI
+    if OPENAI_API_KEY:
+        openai.api_key = OPENAI_API_KEY
+        debug_print("OpenAI API key loaded successfully")
+    else:
+        debug_print("Warning: OpenAI API key not found in config")
 else:
     # Fallback defaults if config fails to load
     DEBUG_MODE = True
     TARGET_USER = "USER"
     led_on = False
     HOTKEY = 'ctrl+shift+alt+o'
+    OPENAI_API_KEY = ''
+    GPT_MODEL = 'gpt-3.5-turbo'
+    LED_COLORS = DEFAULT_LED_COLORS  # Use default colors
+    debug_print("Warning: Config file not found, using default values")
 
 # Now handle Opus loading
 if not discord.opus.is_loaded():
     try:
         if platform.system() == 'Windows':
-            # Try multiple possible Opus DLL locations
-            possible_opus_paths = [
-                './libopus.dll',
-                './opus.dll',
-                './libopus-0.dll',
-                resource_path('libopus.dll'),
-                resource_path('opus.dll'),
-                resource_path('libopus-0.dll')
-            ]
-            
-            for opus_path in possible_opus_paths:
-                try:
-                    discord.opus.load_opus(opus_path)
-                    debug_print(f"Successfully loaded Opus from: {opus_path}")
-                    break
-                except Exception as e:
-                    debug_print(f"Failed to load Opus from {opus_path}: {e}")
-            
-            if not discord.opus.is_loaded():
-                debug_print("Could not load Opus from any location")
-        else:
-            opus_path = resource_path('libopus.so')
-            discord.opus.load_opus(opus_path)
+            # Try to load libopus-0.dll
+            try:
+                discord.opus.load_opus('libopus-0.dll')
+                debug_print("Successfully loaded libopus-0.dll")
+            except Exception as e:
+                debug_print(f"Failed to load libopus-0.dll: {e}")
     except Exception as e:
         debug_print(f"Failed to load Opus: {e}")
         debug_print("Voice functionality may be limited")
@@ -100,30 +108,65 @@ if not discord.opus.is_loaded():
 # Initialize the BlinkStick
 def initialize_blinkstick():
     global bs
-    # Find all connected BlinkSticks
-    all_sticks = blinkstick.find_all()
-    
-    # Look for the specific BlinkStick
-    target_serial = "BS061825-3.0"
-    for stick in all_sticks:
-        if stick.get_serial() == target_serial:
-            bs = stick
-            debug_print(f"Found target BlinkStick: {target_serial}")
-            return True
-    
-    debug_print(f"Target BlinkStick {target_serial} not found!")
-    # Fallback to first available if target not found
-    bs = blinkstick.find_first()
-    if bs:
-        debug_print(f"Using fallback BlinkStick: {bs.get_serial()}")
-        return True
-    return False
+    try:
+        # Find all connected BlinkSticks
+        all_sticks = blinkstick.find_all()
+        if not all_sticks:
+            debug_print("No BlinkStick devices found. Please check USB connection.")
+            return False
+
+        # Look for the specific BlinkStick
+        target_serial = "BS061825-3.0"
+        for stick in all_sticks:
+            try:
+                serial = stick.get_serial()
+                if serial == target_serial:
+                    bs = stick
+                    # Validate device is responsive
+                    if not bs.get_description():
+                        debug_print(f"Found target BlinkStick {target_serial} but device is not responding")
+                        continue
+                    debug_print(f"Found and validated target BlinkStick: {target_serial}")
+                    # Test LED functionality
+                    bs.turn_off()
+                    bs.set_color(channel=0, index=0, red=0, green=255, blue=0)
+                    time.sleep(0.1)
+                    bs.turn_off()
+                    return True
+            except Exception as e:
+                debug_print(f"Error checking BlinkStick {serial}: {str(e)}")
+                continue
+        
+        debug_print(f"Target BlinkStick {target_serial} not found, found devices: {[stick.get_serial() for stick in all_sticks]}")
+        # Fallback to first available if target not found
+        for stick in all_sticks:
+            try:
+                bs = stick
+                if bs.get_description():  # Validate device is responsive
+                    debug_print(f"Using fallback BlinkStick: {bs.get_serial()}")
+                    # Test LED functionality
+                    bs.turn_off()
+                    bs.set_color(channel=0, index=0, red=0, green=255, blue=0)
+                    time.sleep(0.1)
+                    bs.turn_off()
+                    return True
+            except Exception as e:
+                debug_print(f"Error with fallback device: {str(e)}")
+                continue
+        
+        debug_print("No responsive BlinkStick devices found")
+        return False
+        
+    except Exception as e:
+        debug_print(f"Error initializing BlinkStick: {str(e)}")
+        return False
 
 # Replace the existing BlinkStick initialization with the new function
 if not initialize_blinkstick():
-    print("ERROR: No BlinkStick found! Please check USB connection.")
+    print("ERROR: No BlinkStick found or device not responding! Please check USB connection.")
+    debug_print("Bot will continue without LED functionality")
 else:
-    print(f"BlinkStick found: {bs.get_description()} (Serial: {bs.get_serial()})")
+    print(f"BlinkStick initialized successfully: {bs.get_description()} (Serial: {bs.get_serial()})")
 
 # Example function to set the LED color
 def set_led_color(channel, index, red, green, blue):
@@ -145,32 +188,28 @@ def set_led_color(channel, index, red, green, blue):
 # Define MySink class to handle audio data
 class MySink(voice_recv.AudioSink):
     async def generate_speech(self, text, output_file):
-        # Voice options: rate=speed of speech, pitch=voice pitch
-        voice = 'de-AT-JonasNeural'
-        communicate = edge_tts.Communicate(
-            text,
-            voice,
-            rate="+15%",     # Use percentage for rate
-            volume="+0%"      # Use volume instead of pitch
-        )
-        await communicate.save(output_file)
+        """Generate speech using OpenAI's TTS API"""
+        try:
+            client = openai.OpenAI(api_key=OPENAI_API_KEY)
+            with client.audio.speech.with_streaming_response.create(
+                model="tts-1",
+                voice="alloy",
+                input=text
+            ) as response:
+                response.stream_to_file(output_file)
+            debug_print(f"Generated speech saved to {output_file}")
+        except Exception as e:
+            debug_print(f"Error generating speech: {e}")
+            raise
 
     def __init__(self):
         self.speaking_states = {}
         self.audio_queue = Queue()
         self.recognizer = sr.Recognizer()
-        self.jokes = [
-            "Two old ladies were sitting on a park bench when a man in a trench coat came up and flashed them. One old lady immediately had a stroke. The other couldn't quite reach.",
-            "Why did the programmer quit his job? Because he didn't get arrays!",
-            "What do you call a programmer from Finland? Nerdic!",
-            "Why do programmers always mix up Halloween and Christmas? Because Oct 31 equals Dec 25!",
-            "What's a programmer's favorite place? The Cookie Store!"
-        ]
         self.wake_phrases = {
-            "hey dick": "greeting"  # Start with only the greeting command
+            "hey gpt": "chatgpt"
         }
         self.additional_commands = {
-            "tell me a joke": "joke",
             "play sound": "sound"
         }
         self.sound_file = resource_path('sounds/Glenn.mp3')
@@ -180,25 +219,39 @@ class MySink(voice_recv.AudioSink):
         # Check if sound file exists
         if not os.path.exists(self.sound_file):
             debug_print(f"Warning: Sound file not found at {self.sound_file}")
-            # Try to list contents of sounds directory
             sounds_dir = resource_path('sounds')
             if os.path.exists(sounds_dir):
                 debug_print(f"Contents of sounds directory: {os.listdir(sounds_dir)}")
         
         self.is_speaking = False
+        self.is_chatgpt_mode = False
+        self.is_asleep = False  # New state for sleep mode
+        self.conversation_history = []
+        self.is_processing = False
+        self.processing_lock = asyncio.Lock()
+        self.last_response_time = 0
+        self.last_processed_text = None
+        self.debounce_timer = None
+        self.debounce_delay = 0.5
+        self.min_audio_length = 16000
         
-        # Audio settings for Discord's voice format
-        self.input_sample_rate = 48000  # Discord sends 48kHz
-        self.channels = 2  # Discord sends stereo
-        self.buffer_duration = 2.0  # Increased to 2 seconds for better recognition
+        # Audio settings
+        self.input_sample_rate = 48000
+        self.channels = 2
+        self.buffer_duration = 2.0
         self.samples_per_buffer = int(self.input_sample_rate * self.buffer_duration)
         
-        # Separate buffers for original and processed audio
-        self.original_buffer = []  # Store original PCM chunks
-        self.processed_buffer = np.array([], dtype=np.int16)  # Store processed audio
+        # Buffers
+        self.original_buffer = []
+        self.processed_buffer = np.array([], dtype=np.int16)
+        self.accumulated_audio = np.array([], dtype=np.int16)
         
+        # Debug settings
         self.debug_counter = 0
-        debug_print("MySink initialized with Discord voice format")
+        self.debug_recording = False
+        self.total_chunks = 0
+        self.recognition_attempts = 0
+        self.successful_recognitions = 0
         
         # Recognition settings
         self.recognizer.energy_threshold = 100
@@ -207,16 +260,8 @@ class MySink(voice_recv.AudioSink):
         self.recognizer.phrase_threshold = 0.1
         self.recognizer.non_speaking_duration = 0.1
         
-        # Debug settings
-        self.total_chunks = 0
-        self.recognition_attempts = 0
-        self.successful_recognitions = 0
-        self.debug_recording = False
+        debug_print("MySink initialized with Discord voice format")
         
-        # Track if bot has been greeted
-        self.has_been_greeted = False
-
-        # Start the recognition thread using asyncio
         self.recognition_task = asyncio.create_task(self.process_audio())
 
     def cleanup(self):
@@ -224,6 +269,7 @@ class MySink(voice_recv.AudioSink):
         debug_print("Cleaning up MySink resources")
         set_led_color(channel=0, index=0, red=0, green=0, blue=0)
         set_led_color(channel=0, index=2, red=0, green=0, blue=0)
+        set_led_color(channel=0, index=4, red=0, green=0, blue=0)  # Clean up GPT LED
 
     def wants_opus(self) -> bool:
         """Required method: Indicate if we want Opus encoded data"""
@@ -231,11 +277,11 @@ class MySink(voice_recv.AudioSink):
 
     def write(self, user, data):
         try:
-            if (user.name.strip().lower() == TARGET_USER.lower() and 
-                self.is_speaking):
-                # Store original PCM data
+            if (user.name.strip().lower() == TARGET_USER.lower()):
+                # Store original PCM data if debug recording is enabled
                 if self.debug_recording:
                     self.original_buffer.append(data.pcm)
+                    self.debug_counter += 1
                 
                 # Process audio for recognition
                 audio_array = np.frombuffer(data.pcm, dtype=np.int16)
@@ -243,39 +289,64 @@ class MySink(voice_recv.AudioSink):
                 audio_mono = np.mean(audio_array, axis=1, dtype=np.int16)
                 audio_resampled = audio_mono[::3]
                 
-                # Add to processed buffer
-                self.processed_buffer = np.concatenate([self.processed_buffer, audio_resampled])
+                # Check for voice activity
+                is_voice_active = np.max(np.abs(audio_mono)) > 500
                 
-                # Check if we have enough data
-                if len(self.processed_buffer) >= self.samples_per_buffer // 3:
-                    if self.debug_recording:
-                        self.debug_counter += 1
-                        
-                        # Save original audio by combining chunks
-                        if self.original_buffer:
-                            debug_file_orig = f'debug_original_{self.debug_counter}.wav'
-                            with wave.open(debug_file_orig, 'wb') as wf:
-                                wf.setnchannels(2)  # Stereo
-                                wf.setsampwidth(2)  # 16-bit
-                                wf.setframerate(48000)  # Original sample rate
-                                wf.writeframes(b''.join(self.original_buffer))
-                            debug_print(f"Saved combined original audio to {debug_file_orig}")
-                            self.original_buffer = []  # Clear original buffer
-                        
-                        # Save processed audio
-                        debug_file = f'debug_processed_{self.debug_counter}.wav'
-                        with wave.open(debug_file, 'wb') as wf:
-                            wf.setnchannels(1)  # Mono
-                            wf.setsampwidth(2)  # 16-bit
-                            wf.setframerate(16000)  # Speech recognition rate
-                            wf.writeframes(self.processed_buffer.tobytes())
-                        debug_print(f"Saved processed audio to {debug_file}")
+                # Get the voice client and check speaking state
+                voice_client = None
+                for guild in bot.guilds:
+                    if guild.voice_client:
+                        voice_client = guild.voice_client
+                        break
+                
+                is_speaking = voice_client.get_speaking(user) if voice_client else False
+                
+                if is_voice_active or is_speaking:
+                    if not self.is_speaking:
+                        debug_print(f"Voice activity detected from {user.name} (PTT: {is_speaking}, Audio: {is_voice_active})")
+                        self.is_speaking = True
+                        if not self.is_asleep:  # Only set LED if not asleep
+                            set_led_color(channel=0, index=0, 
+                                       red=LED_COLORS['target_voice']['red'],
+                                       green=LED_COLORS['target_voice']['green'],
+                                       blue=LED_COLORS['target_voice']['blue'])
+                        # Clear accumulated audio when starting to speak
+                        self.accumulated_audio = np.array([], dtype=np.int16)
                     
-                    # Queue the processed buffer for recognition
-                    self.audio_queue.put(self.processed_buffer.copy())
-                    self.processed_buffer = np.array([], dtype=np.int16)
+                    # Accumulate audio while speaking
+                    self.accumulated_audio = np.concatenate([self.accumulated_audio, audio_resampled])
+                    debug_print(f"Accumulated audio length: {len(self.accumulated_audio)} samples")
+                else:
+                    if self.is_speaking:
+                        debug_print(f"Voice activity stopped from {user.name}")
+                        self.is_speaking = False
+                        if not self.is_asleep:  # Only set LED if not asleep
+                            set_led_color(channel=0, index=0, red=0, green=0, blue=0)
+                        
+                        # Process accumulated audio when speaking stops
+                        if len(self.accumulated_audio) > 0:
+                            debug_print(f"Queueing audio for processing: {len(self.accumulated_audio)} samples")
+                            if self.debug_recording:
+                                # Save debug files
+                                debug_file = f'debug_processed_{self.debug_counter}.wav'
+                                with wave.open(debug_file, 'wb') as wf:
+                                    wf.setnchannels(1)
+                                    wf.setsampwidth(2)
+                                    wf.setframerate(16000)
+                                    wf.writeframes(self.accumulated_audio.tobytes())
+                                debug_print(f"Saved processed audio to {debug_file}")
+                            
+                            # Queue the audio for processing
+                            self.audio_queue.put(self.accumulated_audio.copy())
+                            debug_print(f"Audio queue size: {self.audio_queue.qsize()}")
+                            self.accumulated_audio = np.array([], dtype=np.int16)
+                
+                # Add to processed buffer for other processing
+                self.processed_buffer = np.concatenate([self.processed_buffer, audio_resampled])
         except Exception as e:
             debug_print(f"Error in write: {e}")
+            # Turn off LED if there's an error
+            set_led_color(channel=0, index=0, red=0, green=0, blue=0)
 
     @voice_recv.AudioSink.listener()
     def on_voice_member_speaking_start(self, member: discord.Member):
@@ -283,11 +354,17 @@ class MySink(voice_recv.AudioSink):
         self.speaking_states[member.name] = True
         if member.name.strip().lower() == TARGET_USER.lower():
             debug_print("Setting red LED for target user")
-            self.is_speaking = True  # Set speaking state
-            set_led_color(channel=0, index=0, red=255, green=0, blue=0)
+            self.is_speaking = True
+            set_led_color(channel=0, index=0, 
+                         red=LED_COLORS['target_voice']['red'],
+                         green=LED_COLORS['target_voice']['green'],
+                         blue=LED_COLORS['target_voice']['blue'])
         else:
             debug_print("Setting blue LED for other user")
-            set_led_color(channel=0, index=2, red=0, green=0, blue=255)
+            set_led_color(channel=0, index=2, 
+                         red=LED_COLORS['other_voice']['red'],
+                         green=LED_COLORS['other_voice']['green'],
+                         blue=LED_COLORS['other_voice']['blue'])
 
     @voice_recv.AudioSink.listener()
     def on_voice_member_speaking_stop(self, member: discord.Member):
@@ -295,7 +372,7 @@ class MySink(voice_recv.AudioSink):
         self.speaking_states[member.name] = False
         if member.name.strip().lower() == TARGET_USER.lower():
             debug_print("Turning off red LED")
-            self.is_speaking = False  # Reset speaking state
+            self.is_speaking = False
             # Clear the audio queue when stopping speaking
             while not self.audio_queue.empty():
                 self.audio_queue.get()
@@ -304,95 +381,242 @@ class MySink(voice_recv.AudioSink):
             debug_print("Turning off blue LED")
             set_led_color(channel=0, index=2, red=0, green=0, blue=0)
 
-    async def process_audio(self):
-        greetings = [
-            "Hello!",
-            "Jaah Was ist los",
-            "Heil arsehole",
-            "I'm listening! You can now ask me for jokes or to play sounds.",
-            "Ready to clap those balls!"
-        ]
+    async def get_chatgpt_response(self, text):
+        """Get response from ChatGPT"""
+        try:
+            # Turn on purple LED for GPT activity
+            set_led_color(channel=0, index=4, 
+                         red=LED_COLORS['gpt_activity']['red'],
+                         green=LED_COLORS['gpt_activity']['green'],
+                         blue=LED_COLORS['gpt_activity']['blue'])
+            
+            # Add user message to conversation history
+            self.conversation_history.append({"role": "user", "content": text})
+            
+            # Get response from ChatGPT using the new API format
+            client = openai.OpenAI(api_key=OPENAI_API_KEY)
+            response = client.chat.completions.create(
+                model=GPT_MODEL,
+                messages=self.conversation_history,
+                max_tokens=150
+            )
+            
+            # Extract and store the response
+            chatgpt_response = response.choices[0].message.content
+            self.conversation_history.append({"role": "assistant", "content": chatgpt_response})
+            
+            return chatgpt_response
+        except Exception as e:
+            debug_print(f"Error getting ChatGPT response: {e}")
+            return "I'm sorry, I encountered an error processing your request."
+        finally:
+            # Turn off purple LED when done
+            set_led_color(channel=0, index=4, red=0, green=0, blue=0)
 
+    async def process_audio(self):
         while True:
             try:
-                if not self.audio_queue.empty() and self.is_speaking:
-                    audio_data = self.audio_queue.get()
-                    
-                    # Convert to WAV for recognition
-                    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_wav:
-                        with wave.open(temp_wav.name, 'wb') as wf:
-                            wf.setnchannels(1)  # Mono
-                            wf.setsampwidth(2)  # 16-bit
-                            wf.setframerate(16000)  # Use 16kHz for speech recognition
-                            wf.writeframes(audio_data.tobytes())
+                if not self.audio_queue.empty():
+                    debug_print(f"Processing audio from queue (size: {self.audio_queue.qsize()})")
+                    async with self.processing_lock:
+                        if self.is_processing:
+                            debug_print("Skipping processing - already in progress")
+                            continue
+                            
+                        current_time = time.time()
+                        if current_time - self.last_response_time < 2.0:  # 2 second cooldown
+                            debug_print("Skipping response due to cooldown")
+                            continue
+                            
+                        # Cancel any existing debounce timer
+                        if self.debounce_timer is not None:
+                            debug_print("Canceling existing debounce timer")
+                            self.debounce_timer.cancel()
+                            
+                        self.is_processing = True
                         
-                        try:
-                            with sr.AudioFile(temp_wav.name) as source:
-                                debug_print("Starting recognition...")
-                                self.recognizer.energy_threshold = 300
-                                self.recognizer.dynamic_energy_threshold = True
-                                self.recognizer.pause_threshold = 0.8
-                                audio = self.recognizer.record(source)
-                                
-                                try:
-                                    text = self.recognizer.recognize_google(
-                                        audio, 
-                                        language='en-US'
-                                    ).lower()
-                                    debug_print(f"Google recognized: '{text}'")
-                                    self.successful_recognitions += 1
-                                    
-                                    # Check for commands in the text
-                                    for phrase, command_type in self.wake_phrases.items():
-                                        if phrase in text:
-                                            debug_print(f"Command detected: {command_type}")
-                                            
-                                            # Handle initial greeting
-                                            if command_type == "greeting":
-                                                if not self.has_been_greeted:
-                                                    # Enable additional commands after first greeting
-                                                    self.wake_phrases.update(self.additional_commands)
-                                                    self.has_been_greeted = True
-                                                    debug_print("Additional commands enabled!")
-                                                
-                                                response = random.choice(greetings)
-                                            elif command_type == "joke":
-                                                response = random.choice(self.jokes)
-                                            elif command_type == "sound":
-                                                debug_print("Sound command detected!")
-                                                # Play custom sound file
-                                                for guild in bot.guilds:
-                                                    if guild.voice_client:
-                                                        try:
-                                                            debug_print(f"Attempting to play sound file: {self.sound_file}")
-                                                            if not os.path.exists(self.sound_file):
-                                                                debug_print("Sound file does not exist!")
-                                                                continue
-                                                                
-                                                            guild.voice_client.play(
-                                                                discord.FFmpegPCMAudio(
-                                                                    self.sound_file,
-                                                                    options='-loglevel debug'  # Add FFmpeg debug output
-                                                                ),
-                                                                after=lambda e: debug_print(f"Finished playing sound" if not e else f"Error playing sound: {e}")
-                                                            )
-                                                            debug_print("Started playing sound file")
-                                                        except Exception as e:
-                                                            debug_print(f"Error playing sound file: {e}")
-                                                        break
-                                
-                                except sr.UnknownValueError:
-                                    debug_print("Speech was unclear")
-                                except sr.RequestError as e:
-                                    debug_print(f"Recognition error: {e}")
-                        finally:
-                            try:
-                                os.unlink(temp_wav.name)  # Clean up temp file
-                            except:
-                                pass
+                        # Get and clear the queue in one operation
+                        audio_data = None
+                        while not self.audio_queue.empty():
+                            audio_data = self.audio_queue.get()
+                            debug_print(f"Retrieved audio data: {len(audio_data) if audio_data is not None else 0} samples")
+                        
+                        if audio_data is None or len(audio_data) < self.min_audio_length:
+                            debug_print(f"No valid audio data retrieved from queue (length: {len(audio_data) if audio_data is not None else 0})")
+                            self.is_processing = False
+                            continue
+                        
+                        # Create a new debounce timer
+                        debug_print("Creating new debounce timer")
+                        self.debounce_timer = asyncio.create_task(self._debounce_processing(audio_data))
+                        
             except Exception as e:
                 debug_print(f"Error in process_audio: {e}")
-            await asyncio.sleep(0.1)  # Use asyncio.sleep instead of time.sleep
+                self.is_processing = False
+            await asyncio.sleep(0.1)
+
+    async def _debounce_processing(self, audio_data):
+        """Process audio with debounce delay"""
+        try:
+            await asyncio.sleep(self.debounce_delay)
+            
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_wav:
+                with wave.open(temp_wav.name, 'wb') as wf:
+                    wf.setnchannels(1)
+                    wf.setsampwidth(2)
+                    wf.setframerate(16000)
+                    wf.writeframes(audio_data.tobytes())
+                
+                try:
+                    with sr.AudioFile(temp_wav.name) as source:
+                        audio = self.recognizer.record(source)
+                        text = self.recognizer.recognize_google(audio, language='en-US').lower()
+                        debug_print(f"Recognized text: '{text}'")
+                        
+                        # Skip if this is the same text we just processed
+                        if text == self.last_processed_text:
+                            debug_print("Skipping duplicate text")
+                            return
+                        
+                        self.last_processed_text = text
+                        self.last_response_time = time.time()
+                        
+                        # Handle sleep mode commands first
+                        if "go to sleep" in text or "good night" in text:
+                            if not self.is_asleep:
+                                self.is_asleep = True
+                                self.is_chatgpt_mode = False
+                                response = "Good night! I'll be here when you need me."
+                                await self.generate_and_play_speech(response)
+                                set_led_color(channel=0, index=0, red=0, green=0, blue=0)  # Turn off LED
+                                return
+                        
+                        if "wake up" in text or "good morning" in text:
+                            if self.is_asleep:
+                                self.is_asleep = False
+                                response = "Good morning! I'm awake and ready to help."
+                                await self.generate_and_play_speech(response)
+                                return
+                        
+                        if "goodbye" in text or "see you later" in text:
+                            self.is_asleep = True
+                            self.is_chatgpt_mode = False
+                            response = "Goodbye! Have a great day!"
+                            await self.generate_and_play_speech(response)
+                            set_led_color(channel=0, index=0, red=0, green=0, blue=0)  # Turn off LED
+                            return
+                        
+                        # If bot is asleep, only respond to wake commands
+                        if self.is_asleep:
+                            debug_print("Bot is asleep, ignoring command")
+                            return
+                        
+                        # Check for wake phrase
+                        for phrase, command_type in self.wake_phrases.items():
+                            if phrase in text:
+                                if command_type == "chatgpt":
+                                    self.is_chatgpt_mode = True
+                                    response = "Hello! I'm now in ChatGPT mode. How can I help you?"
+                                    await self.generate_and_play_speech(response)
+                                    return
+                        
+                        # If in ChatGPT mode, process the text
+                        if self.is_chatgpt_mode:
+                            response = await self.get_chatgpt_response(text)
+                            await self.generate_and_play_speech(response)
+                            return
+                        
+                        # Handle other commands
+                        elif "play sound" in text:
+                            await self.play_sound()
+                            return
+                        
+                except sr.UnknownValueError:
+                    debug_print("Speech was unclear")
+                except sr.RequestError as e:
+                    debug_print(f"Recognition error: {e}")
+                finally:
+                    try:
+                        os.unlink(temp_wav.name)
+                    except:
+                        pass
+        finally:
+            self.is_processing = False
+            self.debounce_timer = None
+
+    async def generate_and_play_speech(self, text):
+        """Generate speech from text and play it"""
+        if not text:
+            debug_print("Skipping speech generation - no text")
+            return
+
+        temp_mp3 = None
+        try:
+            # Turn on purple LED for speech generation
+            set_led_color(channel=0, index=4, 
+                         red=LED_COLORS['gpt_activity']['red'],
+                         green=LED_COLORS['gpt_activity']['green'],
+                         blue=LED_COLORS['gpt_activity']['blue'])
+            
+            temp_mp3 = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+            temp_mp3.close()  # Close the file so we can write to it
+            
+            debug_print(f"Generating speech for text: '{text}'")
+            await self.generate_speech(text, temp_mp3.name)
+            
+            for guild in bot.guilds:
+                if guild.voice_client:
+                    # Stop any currently playing audio
+                    if guild.voice_client.is_playing():
+                        guild.voice_client.stop()
+                        await asyncio.sleep(0.1)  # Small delay to ensure stop is processed
+                    
+                    # Create an event to track when playback is complete
+                    play_complete = asyncio.Event()
+                    
+                    def after_playing(error):
+                        if error:
+                            debug_print(f"Error playing speech: {error}")
+                        play_complete.set()
+                    
+                    # Play the new audio
+                    guild.voice_client.play(
+                        discord.FFmpegPCMAudio(temp_mp3.name),
+                        after=after_playing
+                    )
+                    
+                    # Wait for playback to complete
+                    await play_complete.wait()
+                    break  # Only play in one guild
+            
+        except Exception as e:
+            debug_print(f"Error generating/playing speech: {e}")
+        finally:
+            # Turn off purple LED when done
+            set_led_color(channel=0, index=4, red=0, green=0, blue=0)
+            
+            # Clean up the file after playback is complete
+            if temp_mp3 and os.path.exists(temp_mp3.name):
+                try:
+                    await asyncio.sleep(0.5)  # Wait for FFmpeg to release the file
+                    os.unlink(temp_mp3.name)
+                    debug_print(f"Successfully cleaned up temp file: {temp_mp3.name}")
+                except Exception as e:
+                    debug_print(f"Error cleaning up temp file: {e}")
+
+    async def play_sound(self):
+        """Play the sound file"""
+        for guild in bot.guilds:
+            if guild.voice_client:
+                try:
+                    if os.path.exists(self.sound_file):
+                        guild.voice_client.play(
+                            discord.FFmpegPCMAudio(self.sound_file),
+                            after=lambda e: debug_print(f"Finished playing sound" if not e else f"Error playing sound: {e}")
+                        )
+                except Exception as e:
+                    debug_print(f"Error playing sound file: {e}")
+                break
 
 # Custom bot class
 class MyBot(commands.Bot):
@@ -403,30 +627,16 @@ class MyBot(commands.Bot):
             self.scheduled_announcement.start()
             self._scheduled_announcement_task_started = True
         
-        debug_print(f"Total guilds: {len(self.guilds)}")
-        if len(self.guilds) == 0:
-            debug_print("Bot is not in any guilds! Please invite the bot to your server.")
-            return
-        
         for guild in self.guilds:
             debug_print(f"\nChecking guild: {guild.name} (ID: {guild.id})")
             
-            # Print all members
-            members_list = [f"{member.name}#{member.discriminator}" for member in guild.members]
-            debug_print(f"All guild members: {members_list}")
-            
-            # Print all voice channels and their members
+            # Only print members in voice channels
             for vc in guild.voice_channels:
-                members_in_vc = [f"{m.name}#{m.discriminator}" for m in vc.members]
-                debug_print(f"Voice channel '{vc.name}' members: {members_in_vc}")
+                if vc.members:  # Only print if there are members
+                    members_in_vc = [f"{m.name}#{m.discriminator}" for m in vc.members]
+                    debug_print(f"Voice channel '{vc.name}' members: {members_in_vc}")
             
             for member in guild.members:
-                debug_print(f"\nChecking member: {member.name}#{member.discriminator}")
-                debug_print(f"Member ID: {member.id}")
-                debug_print(f"Member display name: {member.display_name}")
-                debug_print(f"Voice state: {member.voice}")
-                debug_print(f"Is bot: {member.bot}")
-                
                 # Check both name and name#discriminator
                 target_matches = [
                     member.name == TARGET_USER,  # Exact name match
@@ -435,21 +645,58 @@ class MyBot(commands.Bot):
                     f"{member.name}#{member.discriminator}".lower() == TARGET_USER.lower()  # Case-insensitive full match
                 ]
                 
-                debug_print(f"Checking if {member.name}#{member.discriminator} matches {TARGET_USER}")
                 if any(target_matches):
                     debug_print(f"Found target user: {member.name}#{member.discriminator}")
                     if member.voice:
                         channel = member.voice.channel
                         debug_print(f"{TARGET_USER} is in channel: {channel.name}")
                         try:
+                            # Try connecting with voice_recv directly
+                            debug_print("Attempting to connect with voice_recv client...")
                             vc = await channel.connect(cls=voice_recv.VoiceRecvClient)
+                            debug_print("Successfully connected with voice_recv client")
+                            
+                            # Initialize and attach the sink
                             sink = MySink()
                             vc.listen(sink)
-                            debug_print(f"Bot has joined {channel.name} because {TARGET_USER} is in it.")
+                            debug_print("Successfully attached audio sink")
+                            
+                            # Set up error handling
+                            @vc.error
+                            async def on_error(error):
+                                debug_print(f"Voice client error: {error}")
+                                if isinstance(error, Exception):
+                                    debug_print(f"Error details: {str(error)}")
+                            
                             return
+                            
                         except Exception as e:
-                            debug_print(f"Error connecting to channel: {e}")
-                            debug_print(f"Error details: {str(e)}")
+                            debug_print(f"Error connecting to voice channel: {e}")
+                            if hasattr(e, '__cause__') and e.__cause__:
+                                debug_print(f"Cause: {e.__cause__}")
+                            if hasattr(e, '__context__') and e.__context__:
+                                debug_print(f"Context: {e.__context__}")
+                            
+                            # Try fallback method
+                            try:
+                                debug_print("Attempting fallback connection method...")
+                                vc = await channel.connect()
+                                debug_print("Successfully connected with regular voice client")
+                                
+                                # Try to upgrade to voice_recv
+                                try:
+                                    voice_recv_client = voice_recv.VoiceRecvClient.from_client(vc)
+                                    sink = MySink()
+                                    voice_recv_client.listen(sink)
+                                    debug_print("Successfully upgraded to voice_recv client")
+                                    return
+                                except Exception as upgrade_error:
+                                    debug_print(f"Failed to upgrade to voice_recv: {upgrade_error}")
+                                    # Keep using regular voice client
+                                    return
+                                    
+                            except Exception as fallback_error:
+                                debug_print(f"Fallback connection failed: {fallback_error}")
                     else:
                         debug_print(f"{TARGET_USER} was found but is not in a voice channel")
 
@@ -476,7 +723,7 @@ class MyBot(commands.Bot):
                     debug_print("Bot is connected to voice - making announcement")
                     
                     try:
-                        # Generate speech from text
+                        # First generate and play the speech
                         announcement_text = "Happy Friday everyone! It's time for the weekend!"
                         debug_print(f"Generating announcement: {announcement_text}")
                         tts = gTTS(text=announcement_text, lang='en')
@@ -498,6 +745,16 @@ class MyBot(commands.Bot):
                             
                             voice_client.play(discord.FFmpegPCMAudio(temp_path), after=after_play)
                             debug_print("Started playing announcement")
+                            await asyncio.sleep(1)  # Small delay between sounds
+                        
+                        # Then play the MP3 file
+                        sound_file = resource_path('sounds/1900.mp3')
+                        if os.path.exists(sound_file):
+                            debug_print("Playing 1900.mp3")
+                            voice_client.play(
+                                discord.FFmpegPCMAudio(sound_file),
+                                after=lambda e: debug_print(f"Finished playing sound" if not e else f"Error playing sound: {e}")
+                            )
                         return  # Exit after playing in first connected channel
                     except Exception as e:
                         debug_print(f"Error during announcement: {e}")
@@ -529,11 +786,14 @@ def change_led_color():
     try:
         if not led_on:
             debug_print("Key combination pressed! Turning LED on.")
-            set_led_color(channel=0, index=1, red=60, green=0, blue=0)  # Change to red
+            set_led_color(channel=0, index=1, 
+                         red=LED_COLORS['hotkey']['red'],
+                         green=LED_COLORS['hotkey']['green'],
+                         blue=LED_COLORS['hotkey']['blue'])
             led_on = True
         else:
             debug_print("Key combination pressed! Turning LED off.")
-            set_led_color(channel=0, index=1, red=0, green=0, blue=0)  # Turn off the LED
+            set_led_color(channel=0, index=1, red=0, green=0, blue=0)
             led_on = False
     except Exception as e:
         debug_print(f"Error changing LED color: {e}")
@@ -542,19 +802,24 @@ def change_led_color():
 async def power_on_sequence():
     # Cycle through all 8 indexes with a short 50ms delay between each
     for i in range(8):
-        set_led_color(channel=0, index=i, red=0, green=50, blue=0)  # Set LED to green
+        set_led_color(channel=0, index=i, 
+                     red=LED_COLORS['power_on']['red'],
+                     green=LED_COLORS['power_on']['green'],
+                     blue=LED_COLORS['power_on']['blue'])
         await asyncio.sleep(0.05)  # 50ms delay between each LED
         set_led_color(channel=0, index=i, red=0, green=0, blue=0)  # Turn off LED
     
     # Flash all indexes with a longer duration
     for i in range(8):
-        set_led_color(channel=0, index=i, red=0, green=100, blue=0)  # Set all LEDs to green
+        set_led_color(channel=0, index=i, 
+                     red=LED_COLORS['power_on']['red'],
+                     green=LED_COLORS['power_on']['green'],
+                     blue=LED_COLORS['power_on']['blue'])
     await asyncio.sleep(0.5)  # 500ms duration
     
     # Turn off all LEDs after the flash
     for i in range(8):
         set_led_color(channel=0, index=i, red=0, green=0, blue=0)  # Turn off all LEDs
-
 
 # Function to check if the bot is listening to user
 def is_listening(voice_client, user) -> bool:
@@ -591,7 +856,16 @@ def start_key_listener():
 async def on_voice_member_speaking_stop(member: discord.Member):
     if member.name.strip().lower() == TARGET_USER.lower():
         debug_print(f"{member.name} has stopped speaking.")
-        # Add your LED off logic here
+        # Turn off the LED when user stops speaking
+        set_led_color(channel=0, index=0, red=0, green=0, blue=0)
+        # Also update the speaking state in the sink if it exists
+        for guild in bot.guilds:
+            if guild.voice_client and isinstance(guild.voice_client, voice_recv.VoiceRecvClient):
+                sink = guild.voice_client._reader.sink
+                if sink and isinstance(sink, MySink):
+                    sink.is_speaking = False
+                    while not sink.audio_queue.empty():
+                        sink.audio_queue.get()
 
 # Asynchronous wrapper for the callback
 async def async_callback(voice_client, user, data):
@@ -608,16 +882,11 @@ async def on_ready():
     else:
         for guild in bot.guilds:
             debug_print(f"Connected to guild: {guild.name} (ID: {guild.id})")
-            debug_print(f"Bot permissions: {guild.me.guild_permissions}")
-            
-            # Check voice channels
+            # Only check voice channels with members
             for vc in guild.voice_channels:
-                permissions = vc.permissions_for(guild.me)
-                debug_print(f"Can connect to {vc.name}: {permissions.connect}")
-                debug_print(f"Can speak in {vc.name}: {permissions.speak}")
-                debug_print(f"Can use voice activity in {vc.name}: {permissions.use_voice_activation}")
-                members = [f"{m.name}#{m.discriminator}" for m in vc.members]
-                debug_print(f"Members in {vc.name}: {members}")
+                if vc.members:
+                    members = [f"{m.name}#{m.discriminator}" for m in vc.members]
+                    debug_print(f"Members in {vc.name}: {members}")
     
     await power_on_sequence()
 
@@ -665,17 +934,17 @@ async def pulse_notification(user_count):
             # Pulse up
             for brightness in range(0, max_brightness, 5):
                 set_led_color(channel=0, index=3, 
-                            red=brightness, 
-                            green=int(brightness * 0.8),  # Slightly less green for warmer yellow
-                            blue=0)
+                            red=int(brightness * (LED_COLORS['notification']['red'] / 255)),
+                            green=int(brightness * (LED_COLORS['notification']['green'] / 255)),
+                            blue=int(brightness * (LED_COLORS['notification']['blue'] / 255)))
                 await asyncio.sleep(0.05)
             
             # Pulse down
             for brightness in range(max_brightness, 0, -5):
                 set_led_color(channel=0, index=3, 
-                            red=brightness, 
-                            green=int(brightness * 0.8),  # Slightly less green for warmer yellow
-                            blue=0)
+                            red=int(brightness * (LED_COLORS['notification']['red'] / 255)),
+                            green=int(brightness * (LED_COLORS['notification']['green'] / 255)),
+                            blue=int(brightness * (LED_COLORS['notification']['blue'] / 255)))
                 await asyncio.sleep(0.05)
             
             await asyncio.sleep(0.1)  # Small pause between pulses
@@ -692,6 +961,73 @@ async def test(ctx):
         debug_print(f"Test command used in {ctx.guild.name} by {ctx.author}")
     except Exception as e:
         debug_print(f"Error in test command: {e}")
+
+@bot.command()
+async def testfriday(ctx):
+    """Test the Friday announcement"""
+    try:
+        debug_print("Testing Friday announcement")
+        
+        # Check if bot is connected to any voice channel
+        if ctx.author.voice and ctx.author.voice.channel:
+            try:
+                # Connect to the user's voice channel if not already connected
+                if not ctx.voice_client:
+                    await ctx.author.voice.channel.connect()
+                
+                # Create an event to track when playback is complete
+                play_complete = asyncio.Event()
+                
+                # First generate and play the speech
+                announcement_text = "Happy Friday everyone! It's time for the weekend!"
+                debug_print(f"Generating announcement: {announcement_text}")
+                tts = gTTS(text=announcement_text, lang='en')
+                
+                # Save and play the audio
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as fp:
+                    temp_path = fp.name
+                    tts.save(temp_path)
+                    debug_print("Saved announcement audio file")
+                    
+                    def after_play(error):
+                        if error:
+                            debug_print(f"Error playing audio: {error}")
+                        try:
+                            os.unlink(temp_path)  # Delete the temporary file
+                            debug_print("Cleaned up temporary audio file")
+                        except Exception as e:
+                            debug_print(f"Error deleting temp file: {e}")
+                        play_complete.set()
+                    
+                    ctx.voice_client.play(discord.FFmpegPCMAudio(temp_path), after=after_play)
+                    debug_print("Started playing announcement")
+                
+                # Wait for the first sound to finish
+                await play_complete.wait()
+                await asyncio.sleep(0.5)  # Small delay between sounds
+                
+                # Reset the event for the second sound
+                play_complete.clear()
+                
+                # Then play the MP3 file
+                sound_file = resource_path('sounds/1900.mp3')
+                if os.path.exists(sound_file):
+                    debug_print("Playing 1900.mp3")
+                    ctx.voice_client.play(
+                        discord.FFmpegPCMAudio(sound_file),
+                        after=lambda e: play_complete.set()
+                    )
+                    await play_complete.wait()  # Wait for the second sound to finish
+                
+                await ctx.send("Testing Friday announcement!")
+            except Exception as e:
+                debug_print(f"Error during test announcement: {e}")
+                await ctx.send(f"Error: {str(e)}")
+        else:
+            await ctx.send("You need to be in a voice channel to test the announcement!")
+    except Exception as e:
+        debug_print(f"Error in testfriday command: {e}")
+        await ctx.send(f"Error: {str(e)}")
 
 @bot.command()
 async def debugrec(ctx):
