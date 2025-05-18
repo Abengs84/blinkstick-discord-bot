@@ -1,5 +1,6 @@
 # Project-specific files
 config.json
+bot.log
 
 # Python
 __pycache__/

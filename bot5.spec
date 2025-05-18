@@ -3,14 +3,14 @@
 block_cipher = None
 
 a = Analysis(
-    ['bot5.py'],
+    ['src/main.py'],  # Updated to correct entry point
     pathex=[],
-    binaries=[
-        ('libopus-0.dll', '.'),  # Include Opus DLL
-    ],
     datas=[
         ('led.ico', '.'),  # Include icon file
-        ('config.json', '.'),  # Add this line
+        ('config.json', '.'),  # Config file
+        ('assets/led.png', 'assets'),  # Include PNG icon
+        ('assets/1900.mp3', 'assets'),  # Include sound files
+        ('assets/Glenn.mp3', 'assets'),
     ],
     hiddenimports=[
         'discord',
@@ -39,6 +39,16 @@ a = Analysis(
         'nacl.bindings.randombytes',
         'nacl.bindings.sodium_core',
         'nacl.bindings.utils',
+        'openai',  # Added missing dependencies
+        'asyncio',
+        'psutil',
+        'numpy',
+        'wave',
+        'dotenv',
+        'sounddevice',
+        'soundfile',
+        'edge_tts',  # For edge TTS support
+        'src',  # Include src module
     ],
     hookspath=[],
     hooksconfig={},

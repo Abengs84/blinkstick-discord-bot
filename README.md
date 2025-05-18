@@ -1,128 +1,99 @@
-# Discord Voice Activity LED Controller
+# Discord Voice Assistant Bot
 
-A Python-based Discord bot that controls LED indicators (via BlinkStick) based on voice activity in Discord channels. The bot provides visual feedback through LED indicators, integrates with ChatGPT for voice interactions, and includes a system tray interface.
+A Discord bot that can listen to voice channels, control LED indicators, and make scheduled announcements. Perfect for creating an interactive voice presence in your Discord server.
 
 ## Features
 
-- **Real-time Voice Activity Monitoring**: Detects when specific users are speaking in Discord voice channels
-- **LED Integration**: Controls BlinkStick LED devices to provide visual feedback
-  - Red LED indicates when the primary user is speaking
-  - Blue LED indicates when other users are speaking
-  - Purple LED indicates ChatGPT activity
-  - Yellow LED for notifications
-  - Green LED for power-on sequence
-  - Custom LED patterns for various events
-- **ChatGPT Integration**:
-  - Voice-to-text and text-to-speech interactions
-  - Configurable GPT model (default: gpt-3.5-turbo)
-  - Conversation history management
-  - Visual feedback during ChatGPT processing
-- **System Tray Integration**: 
-  - Runs quietly in the system tray
-  - Easy access to status information and controls
-  - Clean shutdown functionality
-- **Status Window**:
-  - Shows current connection status
-  - Displays active server and channel information
-  - Toggle for Debug Mode
-- **Hotkey Support**: Global hotkey combination (Ctrl+Shift+Alt+Ö) for toggling between PTT and Voice Activity
-- **Auto-startup**: Automatically starts with Windows
-- **Error Recovery**: Automatically handles disconnections and hardware issues
-
-## Technical Details
-
-- Built with Discord.py and voice_recv extension for voice activity detection
-- Uses BlinkStick Python API for LED control
-- Implements multi-threading for concurrent operations
-- Tkinter-based status window interface
-- Pystray implementation for system tray functionality
-- Proper resource management and cleanup
-- OpenAI API integration for ChatGPT functionality
+- Voice activity detection with LED indicators
+- Text-to-speech capabilities using OpenAI's API
+- Scheduled announcements (e.g., Friday evening reminders)
+- Configurable target user tracking
+- LED status indicators for different users and states
 
 ## Requirements
 
-- Python 3.9+
-- BlinkStick LED device
+- Python 3.8 or higher
 - Discord Bot Token
 - OpenAI API Key
-- Required Python packages (see requirements.txt)
+- Raspberry Pi (optional, for LED control)
 
-## Setup
+## Installation
 
-1. Install required packages:
+1. Clone this repository:
+```bash
+git clone <repository-url>
+cd discord-voice-assistant
+```
+
+2. Install required packages:
 ```bash
 pip install -r requirements.txt
 ```
 
-2. Create a `config.json` file with your configuration:
+3. Create and configure `config.json`:
 ```json
 {
-    "token": "YOUR_DISCORD_BOT_TOKEN",
-    "target_user": "username",
-    "debug_mode": true,
-    "led_enabled": false,
-    "hotkey": "ctrl+shift+alt+ö",
+    "discord_token": "YOUR_DISCORD_BOT_TOKEN",
     "openai_api_key": "YOUR_OPENAI_API_KEY",
-    "gpt_model": "gpt-3.5-turbo",
-    "led_colors": {
-        "target_voice": {"red": 255, "green": 0, "blue": 0},
-        "other_voice": {"red": 0, "green": 0, "blue": 255},
-        "hotkey": {"red": 60, "green": 0, "blue": 0},
-        "notification": {"red": 255, "green": 204, "blue": 0},
-        "gpt_activity": {"red": 128, "green": 0, "blue": 128},
-        "power_on": {"red": 0, "green": 100, "blue": 0}
-    }
+    "target_user": "username#1234",
+    "announcement_enabled": true,
+    "announcement_day": 4,
+    "announcement_hour": 19,
+    "announcement_minute": 0,
+    "listen_all_users": false
 }
-```
-
-Configuration options:
-- `token`: Your Discord bot token
-- `target_user`: The Discord username to track for voice activity
-- `debug_mode`: Enable/disable debug messages
-- `led_enabled`: Initial LED state
-- `hotkey`: Global hotkey combination for PTT toggle (default: "ctrl+shift+alt+ö")
-- `openai_api_key`: Your OpenAI API key for ChatGPT integration
-- `gpt_model`: GPT model to use (default: "gpt-3.5-turbo")
-- `led_colors`: RGB values for different LED states
-
-3. Connect your BlinkStick device
-   
-4. Run the application:
-
-```bash
-python bot5.py
-```
-
-## Building
-
-Use PyInstaller to create a standalone executable:
-
-```bash
-pyinstaller bot5.spec
 ```
 
 ## Usage
 
-- The bot automatically joins voice channels when the specified user joins
-- LED indicators respond to voice activity in real-time
-- Access status and controls via the system tray icon
-- Use the global hotkey combination for toggling between PTT and Voice Activity
-- Clean shutdown available through system tray menu
-- Interact with ChatGPT through voice commands
-- LED colors can be customized through config.json
+1. Start the bot:
+```bash
+python src/main.py
+```
 
-## Version Compatibility
+2. The bot will automatically:
+   - Connect to your Discord server
+   - Join the voice channel where the target user is present
+   - Monitor voice activity and control LEDs accordingly
+   - Make scheduled announcements if enabled
 
-- discord.py 2.5.0 and above is not compatible
-- Current working version: discord.py 2.4.2
+## Commands
+
+- `!testfriday` - Test the Friday announcement feature
+
+## LED Control
+
+If running on a Raspberry Pi, the bot will control LEDs based on voice activity:
+- Red LED: Target user is speaking
+- Blue LED: Other users are speaking
+
+## Configuration Options
+
+- `discord_token`: Your Discord bot token
+- `openai_api_key`: Your OpenAI API key
+- `target_user`: Discord username to track (format: "username#1234")
+- `announcement_enabled`: Enable/disable scheduled announcements
+- `announcement_day`: Day of the week for announcement (0=Monday, 6=Sunday)
+- `announcement_hour`: Hour for announcement (24-hour format)
+- `announcement_minute`: Minute for announcement
+- `listen_all_users`: Whether to monitor all users or just the target user
+
+## Troubleshooting
+
+1. If the bot fails to connect to voice channels:
+   - Ensure the bot has proper permissions in your Discord server
+   - Check if the target user is in a voice channel
+   - Verify your Discord token is correct
+
+2. If LEDs don't work:
+   - Ensure you're running on a Raspberry Pi
+   - Check GPIO pin connections
+   - Verify you have the required permissions to access GPIO
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Feel free to submit issues and pull requests for new features or bug fixes.
 
-## Acknowledgments
+## License
 
-- Discord.py developers
-- BlinkStick team
-- OpenAI for ChatGPT API
-- [icon-icons.com](https://icon-icons.com/) for the LED icon
+This project is licensed under the MIT License - see the LICENSE file for details.
